@@ -36,6 +36,11 @@
 #define LV_USE_FLEX 1
 #define LV_USE_GRID 0
 
+#define LV_USE_TEXTAREA 1
+#define LV_USE_KEYBOARD 0
+#define LV_USE_LABEL 1
+#define LV_USE_BUTTON 1
+
 /* SDL window backend (PC only). */
 #define LV_USE_SDL 1
 #if LV_USE_SDL
