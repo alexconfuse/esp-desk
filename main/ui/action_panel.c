@@ -1,5 +1,7 @@
 #include "action_panel.h"
 
+#include "chat_session.h"
+#include "esp_err.h"
 #include "esp_log.h"
 
 static const char *TAG = "action_panel";
@@ -10,22 +12,33 @@ static lv_obj_t *s_status;
 static void on_talk(lv_event_t *e)
 {
     (void)e;
-    ESP_LOGI(TAG, "Talk stub — mic / STT / cloud not wired in this MVP");
-    if (s_status) {
-        lv_label_set_text(s_status, "Talk: stub (no mic yet)");
+    ESP_LOGI(TAG, "Talk");
+    esp_err_t err = chat_session_request_talk();
+    if (err != ESP_OK) {
+        if (s_status) {
+            lv_label_set_text(s_status, "Busy — wait for this turn");
+        }
+    } else if (s_status) {
+        lv_label_set_text(s_status, "Listening… tap face to cancel");
     }
 }
 
 static void on_type(lv_event_t *e)
 {
     (void)e;
-    ESP_LOGI(TAG, "Type stub — local text chat UI not wired in this MVP");
+    /* On-device stub: short greeting through the same LLM→TTS pipeline.
+     * Prefer typing at http://desk-buddy.local/chat when on LAN. */
+    ESP_LOGI(TAG, "Type stub → cloud chat");
     if (s_status) {
-        lv_label_set_text(s_status, "Type: stub (no chat yet)");
+        lv_label_set_text(s_status, "Typing stub… or use /chat on LAN");
+    }
+    esp_err_t err = chat_session_request_text("Hello! Comment ça va?");
+    if (err != ESP_OK && s_status) {
+        lv_label_set_text(s_status, "Busy — wait for this turn");
     }
 }
 
-static lv_obj_t *make_stub_btn(lv_obj_t *parent, const char *title, lv_event_cb_t cb)
+static lv_obj_t *make_btn(lv_obj_t *parent, const char *title, lv_event_cb_t cb)
 {
     lv_obj_t *btn = lv_button_create(parent);
     lv_obj_set_size(btn, 160, 56);
@@ -62,8 +75,8 @@ void action_panel_create(lv_obj_t *parent)
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, 20, 0);
 
-    make_stub_btn(row, "Talk", on_talk);
-    make_stub_btn(row, "Type", on_type);
+    make_btn(row, "Talk", on_talk);
+    make_btn(row, "Type", on_type);
 
     s_status = lv_label_create(s_panel);
     lv_label_set_text(s_status, "Tap face woke me — pick Talk or Type");
@@ -85,5 +98,12 @@ void action_panel_show(bool visible)
         if (s_status) {
             lv_label_set_text(s_status, "Tap face woke me — pick Talk or Type");
         }
+    }
+}
+
+void action_panel_set_status(const char *text)
+{
+    if (s_status) {
+        lv_label_set_text(s_status, text ? text : "");
     }
 }

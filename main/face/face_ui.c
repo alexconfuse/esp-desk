@@ -1,9 +1,12 @@
 #include "face_ui.h"
 
 #include "action_panel.h"
-
+#include "bsp/esp_mosaico.h"
 #include "esp_log.h"
 #include "esp_random.h"
+
+#include <strings.h>
+#include <string.h>
 
 static const char *TAG = "face_ui";
 
@@ -11,6 +14,8 @@ static const char *TAG = "face_ui";
 #define FACE_EYE_WHITE    0xF4F7FA
 #define FACE_PUPIL        0x121820
 #define FACE_CHEEK        0x3A4A5C
+#define FACE_MOUTH        0xE8EEF4
+#define FACE_ERR          0xC44B4B
 
 typedef struct {
     lv_obj_t *root;
@@ -21,31 +26,111 @@ typedef struct {
     lv_obj_t *right_pupil;
     lv_obj_t *left_cheek;
     lv_obj_t *right_cheek;
+    lv_obj_t *mouth;
+    lv_obj_t *caption;
     face_emotion_t emotion;
     lv_timer_t *blink_timer;
+    lv_timer_t *speak_timer;
     lv_anim_t breathe_anim;
+    face_ui_tap_cb_t tap_cb;
 } face_ui_t;
 
 static face_ui_t s_face;
+
+static const char *emotion_name(face_emotion_t e)
+{
+    switch (e) {
+    case FACE_EMOTION_IDLE: return "idle";
+    case FACE_EMOTION_CURIOUS: return "curious";
+    case FACE_EMOTION_LISTENING: return "listening";
+    case FACE_EMOTION_THINKING: return "thinking";
+    case FACE_EMOTION_SPEAKING: return "speaking";
+    case FACE_EMOTION_HAPPY: return "happy";
+    case FACE_EMOTION_SAD: return "sad";
+    case FACE_EMOTION_ANNOYED: return "annoyed";
+    case FACE_EMOTION_SURPRISED: return "surprised";
+    case FACE_EMOTION_SLEEPY: return "sleepy";
+    case FACE_EMOTION_OFFLINE: return "offline";
+    case FACE_EMOTION_BAD_KEY: return "bad_key";
+    default: return "?";
+    }
+}
+
+face_emotion_t face_ui_emotion_from_str(const char *name)
+{
+    if (!name || !name[0]) {
+        return FACE_EMOTION_CURIOUS;
+    }
+    if (!strcasecmp(name, "idle")) return FACE_EMOTION_IDLE;
+    if (!strcasecmp(name, "curious")) return FACE_EMOTION_CURIOUS;
+    if (!strcasecmp(name, "listening")) return FACE_EMOTION_LISTENING;
+    if (!strcasecmp(name, "thinking")) return FACE_EMOTION_THINKING;
+    if (!strcasecmp(name, "speaking")) return FACE_EMOTION_SPEAKING;
+    if (!strcasecmp(name, "happy")) return FACE_EMOTION_HAPPY;
+    if (!strcasecmp(name, "sad")) return FACE_EMOTION_SAD;
+    if (!strcasecmp(name, "annoyed") || !strcasecmp(name, "angry")) return FACE_EMOTION_ANNOYED;
+    if (!strcasecmp(name, "surprised")) return FACE_EMOTION_SURPRISED;
+    if (!strcasecmp(name, "sleepy")) return FACE_EMOTION_SLEEPY;
+    if (!strcasecmp(name, "offline")) return FACE_EMOTION_OFFLINE;
+    if (!strcasecmp(name, "bad_key") || !strcasecmp(name, "error")) return FACE_EMOTION_BAD_KEY;
+    return FACE_EMOTION_CURIOUS;
+}
 
 static void set_eye_open(lv_obj_t *eye, int32_t open_h)
 {
     lv_obj_set_height(eye, open_h);
 }
 
+static void eye_metrics(face_emotion_t e, int32_t *w, int32_t *h, int32_t *pdx, int32_t *pdy)
+{
+    *w = 88;
+    *h = 78;
+    *pdx = 0;
+    *pdy = 0;
+    switch (e) {
+    case FACE_EMOTION_CURIOUS:
+    case FACE_EMOTION_LISTENING:
+        *w = 96; *h = 92; *pdx = 10; *pdy = -12;
+        break;
+    case FACE_EMOTION_THINKING:
+        *w = 90; *h = 70; *pdx = -8; *pdy = -16;
+        break;
+    case FACE_EMOTION_SPEAKING:
+    case FACE_EMOTION_HAPPY:
+        *w = 94; *h = 86; *pdy = 4;
+        break;
+    case FACE_EMOTION_SAD:
+    case FACE_EMOTION_OFFLINE:
+        *w = 86; *h = 64; *pdy = 14;
+        break;
+    case FACE_EMOTION_ANNOYED:
+    case FACE_EMOTION_BAD_KEY:
+        *w = 92; *h = 50; *pdy = -6;
+        break;
+    case FACE_EMOTION_SURPRISED:
+        *w = 100; *h = 100;
+        break;
+    case FACE_EMOTION_SLEEPY:
+        *w = 88; *h = 28;
+        break;
+    default:
+        break;
+    }
+}
+
 static void blink_once(void)
 {
-    const int32_t open_h = (s_face.emotion == FACE_EMOTION_CURIOUS) ? 92 : 78;
+    int32_t w, h, dx, dy;
+    eye_metrics(s_face.emotion, &w, &h, &dx, &dy);
     const int32_t shut_h = 8;
 
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)set_eye_open);
-    lv_anim_set_values(&a, open_h, shut_h);
+    lv_anim_set_values(&a, h, shut_h);
     lv_anim_set_duration(&a, 90);
     lv_anim_set_playback_duration(&a, 110);
     lv_anim_set_repeat_count(&a, 1);
-
     lv_anim_set_var(&a, s_face.left_eye);
     lv_anim_start(&a);
     lv_anim_set_var(&a, s_face.right_eye);
@@ -55,13 +140,11 @@ static void blink_once(void)
 static void blink_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
-    if (s_face.emotion != FACE_EMOTION_IDLE) {
+    if (s_face.emotion != FACE_EMOTION_IDLE && s_face.emotion != FACE_EMOTION_CURIOUS) {
         return;
     }
     blink_once();
-    /* Irregular blink cadence feels more alive than a fixed period. */
-    uint32_t next_ms = 1800 + (esp_random() % 3200);
-    lv_timer_set_period(s_face.blink_timer, next_ms);
+    lv_timer_set_period(s_face.blink_timer, 1800 + (esp_random() % 3200));
 }
 
 static void breathe_exec(void *obj, int32_t v)
@@ -69,29 +152,68 @@ static void breathe_exec(void *obj, int32_t v)
     lv_obj_set_style_transform_scale((lv_obj_t *)obj, v, 0);
 }
 
-static void start_breathe(bool curious)
+static void start_breathe(face_emotion_t e)
 {
     lv_anim_delete(s_face.face, breathe_exec);
-
+    int lo = 246, hi = 262, ms = 2200;
+    if (e == FACE_EMOTION_CURIOUS || e == FACE_EMOTION_LISTENING) {
+        lo = 248; hi = 268; ms = 1400;
+    } else if (e == FACE_EMOTION_THINKING) {
+        lo = 250; hi = 258; ms = 900;
+    } else if (e == FACE_EMOTION_SPEAKING || e == FACE_EMOTION_HAPPY) {
+        lo = 252; hi = 270; ms = 700;
+    } else if (e == FACE_EMOTION_OFFLINE || e == FACE_EMOTION_BAD_KEY || e == FACE_EMOTION_SAD) {
+        lo = 244; hi = 250; ms = 2800;
+    }
     lv_anim_init(&s_face.breathe_anim);
     lv_anim_set_var(&s_face.breathe_anim, s_face.face);
     lv_anim_set_exec_cb(&s_face.breathe_anim, breathe_exec);
-    /* LVGL scale uses 256 = 100%. */
-    lv_anim_set_values(&s_face.breathe_anim,
-                       curious ? 248 : 246,
-                       curious ? 268 : 262);
-    lv_anim_set_duration(&s_face.breathe_anim, curious ? 1400 : 2200);
-    lv_anim_set_playback_duration(&s_face.breathe_anim, curious ? 1400 : 2200);
+    lv_anim_set_values(&s_face.breathe_anim, lo, hi);
+    lv_anim_set_duration(&s_face.breathe_anim, ms);
+    lv_anim_set_playback_duration(&s_face.breathe_anim, ms);
     lv_anim_set_repeat_count(&s_face.breathe_anim, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&s_face.breathe_anim, lv_anim_path_ease_in_out);
     lv_anim_start(&s_face.breathe_anim);
 }
 
-static void place_pupils(face_emotion_t emotion)
+static void speak_timer_cb(lv_timer_t *t)
 {
-    /* Idle: soft center. Curious: look slightly up-right. */
-    int32_t dx = (emotion == FACE_EMOTION_CURIOUS) ? 10 : 0;
-    int32_t dy = (emotion == FACE_EMOTION_CURIOUS) ? -12 : 0;
+    (void)t;
+    if (!s_face.mouth || s_face.emotion != FACE_EMOTION_SPEAKING) {
+        return;
+    }
+    int32_t h = 10 + (esp_random() % 22);
+    lv_obj_set_height(s_face.mouth, h);
+}
+
+static void apply_mouth(face_emotion_t e)
+{
+    if (!s_face.mouth) {
+        return;
+    }
+    int32_t w = 56, h = 10;
+    lv_opa_t opa = LV_OPA_70;
+    switch (e) {
+    case FACE_EMOTION_SPEAKING: w = 64; h = 18; opa = LV_OPA_COVER; break;
+    case FACE_EMOTION_HAPPY: w = 70; h = 16; break;
+    case FACE_EMOTION_SAD:
+    case FACE_EMOTION_OFFLINE: w = 48; h = 8; break;
+    case FACE_EMOTION_ANNOYED:
+    case FACE_EMOTION_BAD_KEY: w = 40; h = 6; break;
+    case FACE_EMOTION_SURPRISED: w = 36; h = 36; break;
+    case FACE_EMOTION_LISTENING: w = 50; h = 8; break;
+    default: break;
+    }
+    lv_obj_set_size(s_face.mouth, w, h);
+    lv_obj_set_style_bg_opa(s_face.mouth, opa, 0);
+    lv_obj_set_style_bg_color(s_face.mouth,
+                              lv_color_hex((e == FACE_EMOTION_BAD_KEY || e == FACE_EMOTION_OFFLINE)
+                                               ? FACE_ERR : FACE_MOUTH),
+                              0);
+}
+
+static void place_pupils(int32_t dx, int32_t dy)
+{
     lv_obj_align(s_face.left_pupil, LV_ALIGN_CENTER, dx, dy);
     lv_obj_align(s_face.right_pupil, LV_ALIGN_CENTER, dx, dy);
 }
@@ -139,6 +261,9 @@ static lv_obj_t *make_cheek(lv_obj_t *parent, int32_t x_ofs)
 static void on_face_tap(lv_event_t *e)
 {
     (void)e;
+    if (s_face.tap_cb) {
+        s_face.tap_cb();
+    }
     if (face_ui_get_emotion() == FACE_EMOTION_IDLE) {
         ESP_LOGI(TAG, "Tap wake → curious");
         face_ui_set_emotion(FACE_EMOTION_CURIOUS);
@@ -147,6 +272,7 @@ static void on_face_tap(lv_event_t *e)
 
 void face_ui_create(lv_obj_t *parent)
 {
+    memset(&s_face, 0, sizeof(s_face));
     s_face.root = parent;
     s_face.emotion = FACE_EMOTION_IDLE;
 
@@ -163,7 +289,6 @@ void face_ui_create(lv_obj_t *parent)
     lv_obj_set_style_transform_pivot_x(s_face.face, 160, 0);
     lv_obj_set_style_transform_pivot_y(s_face.face, 160, 0);
     lv_obj_clear_flag(s_face.face, LV_OBJ_FLAG_SCROLLABLE);
-    /* Let taps bubble to the screen. */
     lv_obj_clear_flag(s_face.face, LV_OBJ_FLAG_CLICKABLE);
 
     s_face.left_eye = make_eye(s_face.face, -70);
@@ -173,38 +298,105 @@ void face_ui_create(lv_obj_t *parent)
     s_face.left_cheek = make_cheek(s_face.face, -78);
     s_face.right_cheek = make_cheek(s_face.face, 78);
 
+    s_face.mouth = lv_obj_create(s_face.face);
+    lv_obj_remove_style_all(s_face.mouth);
+    lv_obj_set_size(s_face.mouth, 56, 10);
+    lv_obj_set_style_radius(s_face.mouth, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_face.mouth, lv_color_hex(FACE_MOUTH), 0);
+    lv_obj_set_style_bg_opa(s_face.mouth, LV_OPA_70, 0);
+    lv_obj_align(s_face.mouth, LV_ALIGN_CENTER, 0, 78);
+    lv_obj_clear_flag(s_face.mouth, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_face.caption = lv_label_create(parent);
+    lv_label_set_text(s_face.caption, "");
+    lv_label_set_long_mode(s_face.caption, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_face.caption, 400);
+    lv_obj_set_style_text_color(s_face.caption, lv_color_hex(0x9AA7B5), 0);
+    lv_obj_set_style_text_font(s_face.caption, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_align(s_face.caption, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(s_face.caption, LV_ALIGN_BOTTOM_MID, 0, -170);
+
     action_panel_create(parent);
 
     s_face.blink_timer = lv_timer_create(blink_timer_cb, 2400, NULL);
-    start_breathe(false);
-    place_pupils(FACE_EMOTION_IDLE);
+    s_face.speak_timer = lv_timer_create(speak_timer_cb, 120, NULL);
+    lv_timer_pause(s_face.speak_timer);
+    start_breathe(FACE_EMOTION_IDLE);
+    place_pupils(0, 0);
 
-    ESP_LOGI(TAG, "Face UI ready (idle blink + breathe)");
+    ESP_LOGI(TAG, "Face UI ready");
 }
 
 void face_ui_set_emotion(face_emotion_t emotion)
 {
-    if (s_face.emotion == emotion) {
-        return;
-    }
     s_face.emotion = emotion;
 
-    const int32_t open_h = (emotion == FACE_EMOTION_CURIOUS) ? 92 : 78;
-    const int32_t open_w = (emotion == FACE_EMOTION_CURIOUS) ? 96 : 88;
-    lv_obj_set_size(s_face.left_eye, open_w, open_h);
-    lv_obj_set_size(s_face.right_eye, open_w, open_h);
-    place_pupils(emotion);
-    start_breathe(emotion == FACE_EMOTION_CURIOUS);
+    int32_t w, h, dx, dy;
+    eye_metrics(emotion, &w, &h, &dx, &dy);
+    lv_obj_set_size(s_face.left_eye, w, h);
+    lv_obj_set_size(s_face.right_eye, w, h);
+    place_pupils(dx, dy);
+    start_breathe(emotion);
+    apply_mouth(emotion);
 
-    const bool curious = (emotion == FACE_EMOTION_CURIOUS);
-    lv_obj_set_style_bg_opa(s_face.left_cheek, curious ? LV_OPA_60 : LV_OPA_40, 0);
-    lv_obj_set_style_bg_opa(s_face.right_cheek, curious ? LV_OPA_60 : LV_OPA_40, 0);
-    action_panel_show(curious);
+    bool show_actions = (emotion == FACE_EMOTION_CURIOUS);
+    action_panel_show(show_actions);
 
-    ESP_LOGI(TAG, "Emotion → %s", curious ? "curious" : "idle");
+    lv_opa_t cheek = LV_OPA_40;
+    if (emotion == FACE_EMOTION_HAPPY || emotion == FACE_EMOTION_CURIOUS ||
+        emotion == FACE_EMOTION_SPEAKING) {
+        cheek = LV_OPA_70;
+    }
+    lv_obj_set_style_bg_opa(s_face.left_cheek, cheek, 0);
+    lv_obj_set_style_bg_opa(s_face.right_cheek, cheek, 0);
+
+    face_ui_set_speaking_pulse(emotion == FACE_EMOTION_SPEAKING);
+    ESP_LOGI(TAG, "Emotion → %s", emotion_name(emotion));
+}
+
+void face_ui_set_emotion_locked(face_emotion_t emotion)
+{
+    if (bsp_display_lock(-1)) {
+        face_ui_set_emotion(emotion);
+        bsp_display_unlock();
+    }
 }
 
 face_emotion_t face_ui_get_emotion(void)
 {
     return s_face.emotion;
+}
+
+void face_ui_set_caption(const char *text)
+{
+    if (!s_face.caption) {
+        return;
+    }
+    lv_label_set_text(s_face.caption, text ? text : "");
+}
+
+void face_ui_set_caption_locked(const char *text)
+{
+    if (bsp_display_lock(-1)) {
+        face_ui_set_caption(text);
+        bsp_display_unlock();
+    }
+}
+
+void face_ui_set_tap_callback(face_ui_tap_cb_t cb)
+{
+    s_face.tap_cb = cb;
+}
+
+void face_ui_set_speaking_pulse(bool on)
+{
+    if (!s_face.speak_timer) {
+        return;
+    }
+    if (on) {
+        lv_timer_resume(s_face.speak_timer);
+    } else {
+        lv_timer_pause(s_face.speak_timer);
+        apply_mouth(s_face.emotion);
+    }
 }

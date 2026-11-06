@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "chat_session.h"
 #include "desk_config.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -166,14 +167,14 @@ static esp_err_t render_form(httpd_req_t *req)
              "<option value=\"openai\" %s>OpenAI-compatible</option>"
              "<option value=\"elevenlabs\" %s>ElevenLabs (stored, unused yet)</option>"
              "</select>"
-             "<p class=\"hint\">ElevenLabs path is saved only — no TTS calls in this build.</p>"
+             "<p class=\"hint\">MVP TTS uses OpenAI-compatible only; ElevenLabs key is stored for later.</p>"
              "<label>ElevenLabs API key</label>"
              "<input name=\"eleven_key\" type=\"password\" maxlength=\"127\" "
              "placeholder=\"%s\">"
              "<button type=\"submit\">Save &amp; reboot · Enregistrer</button>"
              "</form>"
-             "<p class=\"hint\">After join: http://desk-buddy.local/ or device IP. "
-             "No LLM / STT / TTS cloud calls yet.</p>"
+             "<p class=\"hint\"><a href=\"/chat\" style=\"color:#8eb6ff\">Type a message · Écrire</a> · "
+             "http://desk-buddy.local/chat</p>"
              "</div></body></html>",
              mode,
              ap_ip[0] ? ap_ip : "—",
@@ -259,10 +260,75 @@ static esp_err_t save_post(httpd_req_t *req)
         "padding:2rem\"><h1>Saved</h1><p>Rebooting to apply Wi‑Fi… / Redémarrage…</p>"
         "<p>Then open <code>http://desk-buddy.local/</code> or the device IP.</p></body></html>";
     send_html(req, ok);
-    ESP_LOGI(TAG, "Settings saved — reboot in 800ms (no cloud calls)");
+    ESP_LOGI(TAG, "Settings saved — reboot in 800ms");
     vTaskDelay(pdMS_TO_TICKS(800));
     esp_restart();
     return ESP_OK;
+}
+
+static esp_err_t chat_get(httpd_req_t *req)
+{
+    const char *page =
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>Desk Buddy · Chat</title>"
+        "<style>"
+        "body{font-family:system-ui,sans-serif;margin:1.5rem;background:#0b1016;color:#e8eef4;}"
+        "textarea{width:100%;max-width:28rem;min-height:6rem;box-sizing:border-box;padding:.65rem;"
+        "border-radius:8px;border:1px solid #2a3340;background:#141b24;color:#f2f5f8}"
+        "button{margin-top:1rem;padding:.65rem 1.2rem;border:0;border-radius:10px;"
+        "background:#3d8bfd;color:#fff;font-weight:600}"
+        "a{color:#8eb6ff} .hint{color:#7f8b99;font-size:.85rem}"
+        "</style></head><body>"
+        "<h1>Type to Desk Buddy</h1>"
+        "<p class=\"hint\">EN/FR auto · same LLM→TTS pipeline as Talk · "
+        "<a href=\"/\">Settings</a></p>"
+        "<form method=\"POST\" action=\"/chat\">"
+        "<textarea name=\"text\" maxlength=\"360\" required "
+        "placeholder=\"Say something… / Dis quelque chose…\"></textarea><br>"
+        "<button type=\"submit\">Send · Envoyer</button>"
+        "</form></body></html>";
+    return send_html(req, page);
+}
+
+static esp_err_t chat_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 2048) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
+    }
+    char *body = calloc(1, (size_t)total + 1);
+    if (!body) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    int received = 0;
+    while (received < total) {
+        int r = httpd_req_recv(req, body + received, total - received);
+        if (r <= 0) {
+            free(body);
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv");
+        }
+        received += r;
+    }
+
+    char text[400];
+    if (!form_get(body, "text", text, sizeof(text)) || !text[0]) {
+        free(body);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "text required");
+    }
+    free(body);
+
+    esp_err_t err = chat_session_request_text(text);
+    const char *msg = (err == ESP_OK)
+                          ? "<!doctype html><html><body style=\"font-family:system-ui;background:#0b1016;"
+                            "color:#e8eef4;padding:2rem\"><h1>Queued</h1>"
+                            "<p>Watch the face — thinking → reply. "
+                            "<a href=\"/chat\" style=\"color:#8eb6ff\">Send another</a></p></body></html>"
+                          : "<!doctype html><html><body style=\"font-family:system-ui;background:#0b1016;"
+                            "color:#e8eef4;padding:2rem\"><h1>Busy</h1>"
+                            "<p>One turn at a time. <a href=\"/chat\" style=\"color:#8eb6ff\">Retry</a></p>"
+                            "</body></html>";
+    return send_html(req, msg);
 }
 
 esp_err_t settings_http_start(const desk_config_t *initial)
@@ -286,6 +352,8 @@ esp_err_t settings_http_start(const desk_config_t *initial)
 
     const httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get};
     const httpd_uri_t save = {.uri = "/save", .method = HTTP_POST, .handler = save_post};
+    const httpd_uri_t chat_g = {.uri = "/chat", .method = HTTP_GET, .handler = chat_get};
+    const httpd_uri_t chat_p = {.uri = "/chat", .method = HTTP_POST, .handler = chat_post};
     /* Common captive-portal probe URLs → redirect to form */
     const httpd_uri_t c1 = {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_get};
     const httpd_uri_t c2 = {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_get};
@@ -296,6 +364,8 @@ esp_err_t settings_http_start(const desk_config_t *initial)
 
     httpd_register_uri_handler(s_server, &root);
     httpd_register_uri_handler(s_server, &save);
+    httpd_register_uri_handler(s_server, &chat_g);
+    httpd_register_uri_handler(s_server, &chat_p);
     httpd_register_uri_handler(s_server, &c1);
     httpd_register_uri_handler(s_server, &c2);
     httpd_register_uri_handler(s_server, &c3);
