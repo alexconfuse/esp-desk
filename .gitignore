@@ -5,6 +5,9 @@ sdkconfig.old
 dependencies.lock
 managed_components/
 
+# PC/host simulator (separate CMake tree under sim/)
+sim/build/
+
 # Editor / OS
 .vscode/
 .idea/
