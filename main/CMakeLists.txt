@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "face/face_ui.c"
+        "ui/action_panel.c"
+    INCLUDE_DIRS
+        "."
+        "face"
+        "ui"
+)
