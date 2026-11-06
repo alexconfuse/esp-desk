@@ -1,6 +1,5 @@
-## Desk Buddy face MVP — ESP-Mosaico (ESP32-S31)
-## Display/touch come from the official BSP (real board drivers).
-## Talk / Type / cloud are intentionally out of this scaffold.
+## Desk Buddy — ESP-Mosaico (ESP32-S31)
+## Face UI + Wi‑Fi provisioning / API key settings (no cloud calls yet).
 dependencies:
   idf:
     version: ">=6.2"
@@ -12,3 +11,6 @@ dependencies:
     path: components/esp-mosaico-bsp
     # Pin a known master commit for reproducible fetches (bump intentionally).
     version: 716fc7bca30ed9c61166a0343bf6f5f995b5131f
+
+  # mDNS for http://desk-buddy.local/ after STA join (external since IDF 5).
+  espressif/mdns: "^1.8.2"

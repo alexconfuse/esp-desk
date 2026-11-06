@@ -3,8 +3,22 @@ idf_component_register(
         "app_main.c"
         "face/face_ui.c"
         "ui/action_panel.c"
+        "config/desk_config.c"
+        "net/wifi_mgr.c"
+        "net/captive_dns.c"
+        "net/settings_http.c"
     INCLUDE_DIRS
         "."
         "face"
         "ui"
+        "config"
+        "net"
+    PRIV_REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_server
+        mdns
+        lwip
 )
