@@ -7,18 +7,28 @@ idf_component_register(
         "net/wifi_mgr.c"
         "net/captive_dns.c"
         "net/settings_http.c"
+        "audio/desk_audio.c"
+        "cloud/openai_client.c"
+        "cloud/chat_session.c"
     INCLUDE_DIRS
         "."
         "face"
         "ui"
         "config"
         "net"
+        "audio"
+        "cloud"
     PRIV_REQUIRES
         nvs_flash
         esp_wifi
         esp_netif
         esp_event
         esp_http_server
+        esp_http_client
+        esp-tls
+        json
         mdns
         lwip
+        esp_timer
+        esp_codec_dev
 )

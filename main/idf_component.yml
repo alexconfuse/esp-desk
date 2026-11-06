@@ -1,16 +1,14 @@
 ## Desk Buddy — ESP-Mosaico (ESP32-S31)
-## Face UI + Wi‑Fi provisioning / API key settings (no cloud calls yet).
+## Face + Wi‑Fi settings + OpenAI-compatible STT/LLM/TTS round-trip.
 dependencies:
   idf:
     version: ">=6.2"
 
   # Official BSP: CO5300 480×480 QSPI LCD + CST9217 touch + LVGL adapter.
-  # Not published as a standalone Component Registry package yet — pin the git tree.
   esp-mosaico-bsp:
     git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
     path: components/esp-mosaico-bsp
-    # Pin a known master commit for reproducible fetches (bump intentionally).
     version: 716fc7bca30ed9c61166a0343bf6f5f995b5131f
 
-  # mDNS for http://desk-buddy.local/ after STA join (external since IDF 5).
   espressif/mdns: "^1.8.2"
+  espressif/cjson: "^1.7.19"

@@ -1,13 +1,12 @@
 /*
  * ESP-Desk — Desk Buddy
  *
- * Face: idle / curious LVGL on ESP-Mosaico 480×480 touch.
- * Net: SoftAP captive portal (first boot) or STA + settings page;
- *      NVS for Wi‑Fi + OpenAI-compatible / ElevenLabs keys.
- * No LLM / STT / TTS cloud calls in this phase.
+ * Face + SoftAP/settings + OpenAI-compatible Talk/Type cloud round-trip.
+ * ElevenLabs remains a settings stub; MVP TTS = OpenAI-compatible PCM.
  */
 
 #include "bsp/esp_mosaico.h"
+#include "chat_session.h"
 #include "desk_config.h"
 #include "esp_log.h"
 #include "face_ui.h"
@@ -38,11 +37,11 @@ static void net_task(void *arg)
         settings_mdns_start();
         char ip[16];
         wifi_mgr_get_sta_ip(ip, sizeof(ip));
-        ESP_LOGI(TAG, "Settings: http://desk-buddy.local/ or http://%s/", ip);
+        ESP_LOGI(TAG, "Settings/chat: http://desk-buddy.local/ or http://%s/", ip);
     } else {
         char ip[16];
         wifi_mgr_get_ap_ip(ip, sizeof(ip));
-        ESP_LOGI(TAG, "Provisioning: join SoftAP DeskBuddy-Setup → http://%s/", ip);
+        ESP_LOGI(TAG, "Provisioning: SoftAP DeskBuddy-Setup → http://%s/", ip);
     }
 
     vTaskDelete(NULL);
@@ -50,7 +49,7 @@ static void net_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Desk Buddy — face + Wi‑Fi/settings (no cloud yet) %dx%d",
+    ESP_LOGI(TAG, "Desk Buddy — face + Wi‑Fi + cloud chat %dx%d",
              BSP_LCD_H_RES, BSP_LCD_V_RES);
 
     ESP_ERROR_CHECK(desk_config_nvs_init());
@@ -68,10 +67,9 @@ void app_main(void)
                  esp_err_to_name(err));
     }
 
-    /* Real Mosaico drivers: CO5300 QSPI LCD + CST9217 touch + LVGL adapter. */
     lv_display_t *disp = bsp_display_start();
     if (!disp) {
-        ESP_LOGE(TAG, "bsp_display_start failed — check BSP / wiring / IDF target esp32s31");
+        ESP_LOGE(TAG, "bsp_display_start failed — check BSP / IDF target esp32s31");
         return;
     }
 
@@ -84,9 +82,12 @@ void app_main(void)
     face_ui_create(scr);
 
     bsp_display_unlock();
-    ESP_LOGI(TAG, "UI up — idle face; tap → curious (Talk/Type stubs)");
+    ESP_LOGI(TAG, "UI up — tap → Talk/Type; listen cancel on second tap");
 
-    /* Net stack off the LVGL path so SoftAP/STA wait never freezes the face. */
+    if (chat_session_start(&cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "chat_session_start failed");
+    }
+
     BaseType_t ok = xTaskCreate(net_task, "desk_net", 8192, &cfg, 5, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "Failed to start desk_net task");
