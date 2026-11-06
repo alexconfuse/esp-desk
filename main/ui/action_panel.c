@@ -6,26 +6,36 @@ static const char *TAG = "action_panel";
 
 static lv_obj_t *s_panel;
 static lv_obj_t *s_status;
+static action_panel_cb_t s_talk_cb;
+static action_panel_cb_t s_type_cb;
 
 static void on_talk(lv_event_t *e)
 {
     (void)e;
-    ESP_LOGI(TAG, "Talk stub — mic / STT / cloud not wired in this MVP");
+    if (s_talk_cb) {
+        s_talk_cb();
+        return;
+    }
+    ESP_LOGI(TAG, "Talk stub — no handler wired");
     if (s_status) {
-        lv_label_set_text(s_status, "Talk: stub (no mic yet)");
+        lv_label_set_text(s_status, "Talk: stub (no handler)");
     }
 }
 
 static void on_type(lv_event_t *e)
 {
     (void)e;
-    ESP_LOGI(TAG, "Type stub — local text chat UI not wired in this MVP");
+    if (s_type_cb) {
+        s_type_cb();
+        return;
+    }
+    ESP_LOGI(TAG, "Type stub — no handler wired");
     if (s_status) {
-        lv_label_set_text(s_status, "Type: stub (no chat yet)");
+        lv_label_set_text(s_status, "Type: stub (no handler)");
     }
 }
 
-static lv_obj_t *make_stub_btn(lv_obj_t *parent, const char *title, lv_event_cb_t cb)
+static lv_obj_t *make_btn(lv_obj_t *parent, const char *title, lv_event_cb_t cb)
 {
     lv_obj_t *btn = lv_button_create(parent);
     lv_obj_set_size(btn, 160, 56);
@@ -62,11 +72,11 @@ void action_panel_create(lv_obj_t *parent)
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, 20, 0);
 
-    make_stub_btn(row, "Talk", on_talk);
-    make_stub_btn(row, "Type", on_type);
+    make_btn(row, "Talk", on_talk);
+    make_btn(row, "Type", on_type);
 
     s_status = lv_label_create(s_panel);
-    lv_label_set_text(s_status, "Tap face woke me — pick Talk or Type");
+    lv_label_set_text(s_status, "Tap face woke me - pick Talk or Type");
     lv_obj_set_style_text_color(s_status, lv_color_hex(0x9AA7B5), 0);
     lv_obj_set_style_text_font(s_status, &lv_font_montserrat_18, 0);
 
@@ -83,7 +93,24 @@ void action_panel_show(bool visible)
     } else {
         lv_obj_add_flag(s_panel, LV_OBJ_FLAG_HIDDEN);
         if (s_status) {
-            lv_label_set_text(s_status, "Tap face woke me — pick Talk or Type");
+            lv_label_set_text(s_status, "Tap face woke me - pick Talk or Type");
         }
     }
+}
+
+void action_panel_set_status(const char *text)
+{
+    if (s_status) {
+        lv_label_set_text(s_status, text ? text : "");
+    }
+}
+
+void action_panel_set_talk_cb(action_panel_cb_t cb)
+{
+    s_talk_cb = cb;
+}
+
+void action_panel_set_type_cb(action_panel_cb_t cb)
+{
+    s_type_cb = cb;
 }
